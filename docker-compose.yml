@@ -1,0 +1,73 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:6.2.6-alpine
+    hostname: redis.db
+    command: redis-server --save "" --appendonly yes  # No need for persistance
+    expose:
+      - 6379
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - echo-net
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        window: 120s
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+        delay: 10s
+
+  mongodb:
+    image: mongo
+    hostname: mongo.db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGODB__ADMINUSERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB__ADMINPASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./.db/:/data/db:rw
+    networks:
+      - echo-net
+    ports:
+      - 27017:27017
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo 10.10.10.60:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express
+    hostname: mongo.ex
+    container_name: mongo-express
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+    networks:
+      - echo-net
+    ports:
+      - 8081:8081
+    healthcheck:
+      test:  wget --quiet --tries=3 --spider http://${ME_CONFIG_BASICAUTH_USERNAME}:${ME_CONFIG_BASICAUTH_PASSWORD}@mongo.ex:8081 || exit 1
+      interval: 3s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  echo-net:
+    driver: overlay
